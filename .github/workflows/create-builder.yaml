@@ -1,0 +1,45 @@
+name: Create builder image
+
+description: |
+  Build (and push) the builder image
+
+on:
+  workflow_dispatch:
+    inputs:
+      cargo-pgrx-version:
+        required: false
+        type: string
+        default: "0.14.3"
+        description: |
+          version of cargo-pgrx to download (inside image build)
+
+concurrency:
+  group: pg_snowflake_id # Project-wide
+  cancel-in-progress: true
+
+permissions:
+  contents: none
+
+jobs:
+  build-and-push-builder-image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.DOCKER_CONTAINER_REGISTRY_TOKEN }}
+
+      - name: Build image
+        env:
+          CARGO_PGRX_VERSION: ${{ inputs.cargo-pgrx-version }}
+        run: |
+          docker build -f infra/builder.Dockerfile -t ghcr.io/${{ github.repository_owner }}/pg_snowflake_id-builder:latest .
+
+      - name: Push image
+        run: |
+          docker push ghcr.io/${{ github.repository_owner }}/pg_snowflake_id-builder:latest

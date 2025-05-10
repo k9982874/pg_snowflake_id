@@ -1,0 +1,76 @@
+name: Create release package
+
+description: |
+  Create (and release) a new version
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release (ex. `0.1.0`)
+        required: false
+        type: string
+
+  push:
+    branches:
+      # Run on all commits to main, because GitHub somehow doesn't support only specifying tag patterns
+      # (filtering must be done at the per-job level with an `if`)
+      # - main
+      # Run on auto-generated release PRs
+      - pre-v[0-9]+\.[0-9]+\.[0-9]+
+    tags:
+      # Run on released tags (created by automated post-merge release-tagging), to generate the actual release
+      - v[0-9]+\.[0-9]+\.[0-9]+
+
+env:
+  CARGO_TERM_COLOR: always
+  HOME: /root
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/pg_snowflake_id-builder:latest
+    strategy:
+      matrix:
+        config:
+          - pgrx:
+              pg-version: pg15
+            pg:
+              version: "15.13"
+          - pgrx:
+              pg-version: pg16
+            pg:
+              version: "16.9"
+          - pgrx:
+              pg-version: pg17
+            pg:
+              version: "17.5"
+    env:
+      pgrx-pg-version: ${{ matrix.config.pgrx.pg-version }}
+      pkg-pg-version: ${{ matrix.config.pg.version }}
+      pkg-name: "pg_snowflake_id-${{ matrix.config.pg.version }}-${{ inputs.version || github.ref_name }}"
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build
+      run: |
+        apk add --no-cache zip && \
+          RUSTFLAGS="-Ctarget-feature=-crt-static" \
+          cargo pgrx package --features "${{ env.CARGO_FEATURES }}" \
+          --pg-config $HOME/.pgrx/${{ env.pkg-pg-version }}/pgrx-install/bin/pg_config -v
+    - name: Package
+      run: |
+        mkdir ${{ env.pkg-name }} && \
+          cp -r ./target/release/pg_snowflake_id-${{ env.pgrx-pg-version }}/root/.pgrx/${{ env.pkg-pg-version }}/pgrx-install/* \
+            ./${{ env.pkg-name }} && \
+          zip -r ./${{ env.pkg-name }}.zip ./${{ env.pkg-name }} && \
+          sha256sum ./${{ env.pkg-name }}.zip > ./${{ env.pkg-name }}.sha256
+    - name: Release
+      uses: softprops/action-gh-release@v2
+      env:
+        GITHUB_TOKEN: ${{ secrets.PAT }}
+      if: github.ref_type == 'tag'
+      with:
+        files: |
+          ./${{ env.pkg-name }}.zip
+          ./${{ env.pkg-name }}.sha256
